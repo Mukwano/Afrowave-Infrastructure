@@ -1,56 +1,51 @@
-Afrowave Infrastructuer - WG-Inet Network
-========================
+# Afrowave Infrastructure – WG-Inet Network
 
 **Version:** Draft 1  
-**Scope:** Complete documentation of Afrowave’s WG-Inet network segment (Internet VPN egress).
+**Scope:** Complete documentation of Afrowave’s WG-Inet network segment (primary Internet VPN egress).
 
 ---
 
 ## 1. Purpose & Role of WG-Inet
-WG-Inet je **primární zabezpečená VPN síť pro přístup do internetu** přes Afrowave infrastrukturu.
+WG-Inet is the **primary secure VPN tunnel for Internet egress** within the Afrowave infrastructure.
 
-Je navržena jako:
-- hlavní výstupní bod do internetu pro klienty,
-- rozšíření interní sítě o zabezpečený IPv4 tunel,
-- plně řízený firewalld zónou `aw-inet`,
-- síť s NATem pro IPv4 (bez IPv6 NAT),
-- nízká latence, vysoká spolehlivost, vysoká úroveň šifrování.
+It is designed to provide:
+- a controlled and encrypted IPv4 Internet exit point for clients,
+- secure remote access to the Internet through Afrowave servers,
+- a failover/fallback path for intra-infrastructure communication,
+- a clean separation of trust levels via firewalld zone isolation,
+- high-performance, low-latency encrypted transport.
 
-Služby dostupné přes WG-Inet:
-- veškerý IPv4 internetový provoz,
-- AD / DNS / management traffic směrem na DC1,
-- fallback kanál pro komunikaci server–server.
-
-WG-Inet **není** určena pro veřejný přístup do DC1 – DC1 poskytuje služby pouze přes WG tunely.
+WG-Inet **does NOT expose domain services to the public Internet**. All domain-related traffic is only available inside WG tunnels.
 
 ---
 
-## 2. IP Addressing Scheme
-### IPv4 tunel:
+## 2. Addressing Scheme
+### IPv4
 ```
 10.22.0.0/16
 DC1:    10.22.0.1
 Client: 10.22.0.10
 ```
 
-### IPv6 (ULA only, no internet routing):
+### IPv6 (ULA – internal only)
 ```
 fd10:af:22::/64
 DC1:    fd10:af:22::1
 Client: fd10:af:22::10
 ```
 
-IPv6 se zatím nepoužívá pro odchozí internet. Budoucí plán: globální prefix → čisté routování.
+IPv6 is currently **not used** for Internet egress. IPv6 on the server itself works normally.
+A future plan will introduce global IPv6 prefix routing.
 
 ---
 
 ## 3. WireGuard Configuration (Server – DC1)
-**/etc/wireguard/wg-inet.conf**
+**`/etc/wireguard/wg-inet.conf`**
 
 ```ini
 # =========================================
-# Afrowave WG-INET - DC1
-# IPv4 Internet Exit for Clients
+# Afrowave WG-INET – DC1
+# Primary IPv4 Internet Exit for Clients
 # =========================================
 
 [Interface]
@@ -58,11 +53,10 @@ PrivateKey = <DC1-WG-INET-PRIVATE-KEY>
 Address = 10.22.0.1/16, fd10:af:22::1/64
 ListenPort = 52010
 
-# NAT + forwarding řeší firewalld:
-#   - Zone: aw-inet
-#   - masquerade=yes
-#   - forward=yes
-# Proto zde nejsou žádné PostUp/PostDown iptables.
+# NAT and forwarding are handled by firewalld (zone: aw-inet):
+#   masquerade = yes
+#   forward = yes
+# No iptables PostUp/PostDown rules are used.
 
 [Peer]
 # Slávek — Desktop (primary client)
@@ -88,23 +82,27 @@ Endpoint = ad.afrowave.ltd:52010
 PersistentKeepalive = 25
 ```
 
-**Poznámka:** IPv6 přes tunel je zatím blokováno ISP / absencí NAT66. IPv6 bude řešeno později.
+### Note on IPv6
+Client IPv6 through WG-Inet is intentionally disabled for now.  
+Server-side IPv6 works normally.  
+Client-side IPv6 egress will be implemented later using either:
+- a global IPv6 prefix (preferred), or
+- temporary NAT66 (not preferred).
 
 ---
 
-## 5. Firewall – Zóna `aw-inet`
-Významná část WG-Inet infrastruktury.
+## 5. Firewall – Zone `aw-inet`
+WG-Inet uses a dedicated firewalld zone to isolate and control traffic.
 
-### Konfigurace zóny
+### Zone Properties
 - **target:** ACCEPT
-- **interfaces:** wg-inet
+- **interfaces:** `wg-inet`
 - **services:** dns, kerberos, kpasswd, ldap, ldaps, rpc-bind, samba, samba-dc, ssh
 - **ports opened:** 52010/udp
-- **masquerade:** yes (IPv4 NAT)
-- **forward:** yes (nutné pro routing 10.22.0.0/16 → internet)
+- **masquerade:** yes (IPv4 NAT for clients)
+- **forward:** yes (required for routing 10.22.0.0/16 → Internet)
 
-### Masquerade
-Řízeno **firewalld (nftables)**:
+### Masquerade Activation
 ```
 sudo firewall-cmd --zone=aw-inet --add-masquerade --permanent
 ```
@@ -112,30 +110,30 @@ sudo firewall-cmd --zone=aw-inet --add-masquerade --permanent
 ---
 
 ## 6. Routing & Forwarding
-### Globální forwarding (`/etc/sysctl.conf`)
+### Global forwarding settings (`/etc/sysctl.conf`)
 ```conf
 net.ipv4.ip_forward=1
 net.ipv6.conf.all.forwarding=1
 ```
 
-### Routing tabulka DC1
+### Routing Table – DC1
 ```
 10.22.0.0/16 dev wg-inet src 10.22.0.1
 fd10:af:22::/64 dev wg-inet
 ```
 
-### NAT tabulka – pouze firewalld
-`
+### NAT State
+```
 iptables -t nat -L POSTROUTING
-`
-→ **musí být prázdná** (jen policy ACCEPT). Vše řeší nft.
+```
+→ Must remain **empty**. All NAT is handled by firewalld (nftables backend).
 
 ---
 
-## 7. Live Checks (Operational)
-### a) WireGuard
+## 7. Live Operational Checks
+### a) WireGuard State
 ```
-wg show wg-inet
+wq show wg-inet
 systemctl status wg-quick@wg-inet
 ```
 
@@ -145,18 +143,18 @@ ping 1.1.1.1
 curl -4 https://example.com
 ```
 
-### c) IPv6 server-only test
+### c) Server-only IPv6 Test
 ```
 ping6 2606:4700:4700::1111
 curl -6 https://example.com
 ```
 
-### d) Firewall
+### d) Firewall Zone Overview
 ```
 firewall-cmd --list-all --zone=aw-inet
 ```
 
-### e) Routing
+### e) Routing Table
 ```
 ip r
 ip -6 r
@@ -165,40 +163,38 @@ ip -6 r
 ---
 
 ## 8. Security Model
-WG-Inet je chráněna:
-- oddělenou zónou `aw-inet`,
-- NATem pouze uvnitř zóny,
-- nulovou expozicí doménových služeb veřejně,
-- endpointem dostupným pouze na UDP 52010,
-- klienti jsou explicitně definováni pomocí AllowedIPs.
+WG-Inet enforces:
+- strict zone-based separation (`aw-inet`),
+- NAT only inside the VPN zone,
+- minimal public exposure (only UDP/52010 and SSH on eth0),
+- client isolation via explicit AllowedIPs,
+- no domain services exposed publicly.
 
-Public interface (eth0) obsahuje pouze:
-- ssh
-- dhcpv6-client
-
-Vše ostatní je blokováno.
+The public (WAN) interface `eth0` exposes only:
+- `ssh`
+- `dhcpv6-client`
+All other ports and services are blocked.
 
 ---
 
 ## 9. Future Extensions
-- přesun primárního internetového egressu na Diblíka (server doma),
-- DC1 jako sekundární/failover exit,
-- Web VPS jako terciární exit,
-- globální IPv6 prefix → čisté IPv6 routování bez NAT66,
-- možnost bondingu vícero WG-INET tunelů.
+- Move primary Internet egress to **Diblík** (home server),
+- DC1 becomes secondary/fallback egress,
+- Web VPS becomes tertiary egress,
+- Introduce global IPv6 prefix for clean IPv6 routing,
+- Possible multi-tunnel bonding for failover/aggregation.
 
 ---
 
-## 10. Stav Implementace
-- [x] DC1 funkční
-- [x] NAT přes firewalld
-- [x] IPv4 internet routován pro klienty
-- [ ] Dokumentace v DC1-Inventory
-- [ ] Dokumentace v Live-Checks přidat
-- [ ] Přidat WG-Inet skeletony na dalších serverech (Diblík, VPS)
+## 10. Implementation Status
+- [x] DC1 implemented and functional
+- [x] firewalld NAT functional
+- [x] IPv4 Internet access for clients works
+- [ ] Add WG-Inet entry to DC1-Inventory
+- [ ] Extend DC1-Live-Checks with WG-Inet checks
+- [ ] Prepare WG-Inet skeletons for Diblík & VPS servers
 
 ---
 
 # END
-
 
