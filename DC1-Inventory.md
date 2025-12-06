@@ -1,161 +1,196 @@
-DC1-Inventory
-========================
+# Afrowave DC1 – Infrastructure Inventory
 
-# DC1 – Inventory and System State
-Afrowave Domain Controller #1 (Primary)
-
-This document describes the current configuration, network state, services, security policies, and operational details of DC1.  
-It serves both as an inventory reference and a baseline for maintenance and future troubleshooting.
+**Server Name:** afw-dc1
+**Role:** Primary Samba AD DC, DNS, KDC, VPN hub (WG-Link, WG-Internal, WG-Inet)
+**Status:** Active, production-critical
 
 ---
 
-## 1. Server Identity
-- **Hostname:** dc1.afrowave.ltd  
-- **Role:** Primary Active Directory Domain Controller  
-- **Location:** VPS (USA)  
-- **Operating System:** Debian 13.1 “Trixie”  
-- **Domain:** AFROWAVE.LTD  
-- **Time zone:** (to be filled)  
-- **Administrator accounts:** (to be filled)  
-- **Last verified:** (date)
+## 1. Hardware Overview
 
-> All details below will be updated as we inspect the live server.
+* **Platform:** VPS (Interserver)
+* **CPU:** Virtual (shared cores)
+* **RAM:** 3 GB
+* **Storage:** SSD-backed virtual disk
+* **NIC:** eth0 (public WAN)
 
 ---
 
-## 2. Network Configuration Overview
+## 2. Operating System
 
-### 2.1 Interfaces
-| Interface | Purpose | IP Address | Notes |
-|----------|----------|------------|-------|
-| `eth0` | Main WAN | (to be filled) | Public IP assigned by provider |
-| `wg-link` | Server backbone | (to be filled) | Full trust network, all ports allowed |
-| `wg-enroll` | (optional) Domain join VPN | (not configured) | Reserved for domain onboarding |
-| `wg-internal` | (optional) Internal client VPN | (not configured) | Reserved |
-
-### 2.2 DNS Configuration
-- **DNS mode:** Samba Internal DNS  
-- **Authoritative zones:**  
-  - `afrowave.ltd`  
-  - `_msdcs.afrowave.ltd`  
-- **Forwarders:**  
-  - (to be filled – expected 1–2 public resolvers)  
-- **Required A Records for WG-LINK:**  
-  - `dc1-link.afrowave.ltd → <wg-link-IP>`
-
-### 2.3 Routing
-- **Default route:** WAN  
-- **Backup route (planned):** via WG-LINK (Diblík or DC2)  
-- **NAT role:**  
-  - Primary NAT exit for servers via WG-LINK
+* **OS:** Debian 13.1 (Trixie)
+* **Kernel:** Debian stock kernel (systemd-managed)
+* **Init:** systemd
+* **Firewall:** firewalld (nftables backend)
 
 ---
 
-## 3. WireGuard Configuration
+## 3. Network Interfaces
 
-### 3.1 WG-LINK Interface
-- **Purpose:** Trusted backbone for server-to-server communication  
-- **Status:** Running  
-- **Peer(s):**  
-  - Diblík (home server)  
-  - Edge server  
-  - (future) DC2  
-- **IP range:** (to be filled – example: 10.30.0.0/24)  
-- **DC1 IP:** (to be filled)
+### Physical
 
-### 3.2 WG-LINK Firewall Zone
-- Zone name: `aw-link`  
-- Settings:
-  - `target=ACCEPT`  
-  - No port restrictions  
-  - No NAT  
+* **eth0** – WAN / public Internet
 
-> This zone is used exclusively for trusted server interconnects.
+  * IPv4: `69.169.97.200/25`
+  * Gateway: `69.169.97.129`
+  * IPv6: global address assigned via ISP
+  * Zone: `public`
 
----
+### Virtual (WireGuard)
 
-## 4. Active Directory Services
+* **wg-link**  – Server-to-server trusted mesh (DC1 ↔ home, VPS)
 
-### 4.1 Samba AD DC
-- **Service:** `samba-ad-dc`  
-- **Status:** Active and running  
-- **Version:** (to be filled)  
-- **Database health:**  
-  - `samba-tool dbcheck` → pending  
-- **Replication:**  
-  - Only DC1 present (no replication yet – DC2 planned)
+  * IP: `10.30.0.1/24`, `fd10:af:30::1/64`
+  * Zone: `aw-link`
 
-### 4.2 Kerberos
-- **Realm:** `AFROWAVE.LTD`  
-- **Ports:** 88/tcp, 88/udp open  
-- **KDC Status:** (to be filled)
+* **wg-internal** – Internal AD/Samba/DNS/management VPN
 
-### 4.3 NTP / Time Services
-- **Time service:** `chrony` or `ntpsec` (to be filled)  
-- **Domain-signed time:** expected via Samba `ntp_signd`  
-- **Upstream NTP servers:** (to be filled)  
-- **Current offset:** (to be filled from `timedatectl`)  
+  * IP: `10.20.0.1/16`, `fd10:af:2::1/64`
+  * Zone: `aw-internal`
 
-NTP correction and configuration will be completed and documented in the next steps.
+* **wg-inet** – Internet egress VPN (primary IPv4 exit)
+
+  * IP: `10.22.0.1/16`, `fd10:af:22::1/64`
+  * Zone: `aw-inet`
+
+* **wg-enroll** – Enrollment-only network (planned)
+
+  * Zone: `aw-enroll`
+
+* **wg-guest** – Guest Internet access (isolated)
+
+  * Zone: `aw-guest`
+
+* **wg-rootoz** – High-security admin tunnel (planned)
+
+  * Zone: `aw-rootoz`
 
 ---
 
-## 5. Firewall Configuration
+## 4. Firewall Zones (firewalld)
 
-### 5.1 Zones
-| Zone | Purpose | Restrictions |
-|------|----------|--------------|
-| `public` | WAN | strict |
-| `aw-link` | WG-LINK | allow all |
-| `internal` | (optional) | for local services |
-| others… | (TBD) | |
+### Public (eth0)
 
-### 5.2 Required Open Ports for AD
-Category | Ports | Status
----------|-------|---------
-DNS | 53/tcp, 53/udp | (to be verified)
-Kerberos | 88/tcp, 88/udp | (to be verified)
-LDAP | 389/tcp, 389/udp | (to be verified)
-LDAPS | 636/tcp | (optional)
-SMB / RPC | 135/tcp, 139/tcp, 445/tcp | (to be verified)
-Kerberos password | 464/tcp, 464/udp | (to be verified)
-Global Catalog | 3268/tcp, 3269/tcp | (to be verified)
-NTP | 123/udp | (to be verified)
+* **Allowed services:** ssh, dhcpv6-client
+* **Masquerade:** yes
+* **Purpose:** WAN access, secure remote admin only
 
----
+### aw-link (wg-link)
 
-## 6. Installed Services
-- Samba AD DC  
-- Firewalld  
-- Chrony or NTPsec (to be confirmed)  
-- Cockpit (with valid certificate)  
-- SSH server  
-- (others to be added)
+* Purpose: trusted server-to-server mesh
+* Allowed: DNS, Kerberos, LDAP, LDAPS, NTP, Samba, high ports
+
+### aw-internal (wg-internal)
+
+* Purpose: internal AD/DNS/Kerberos network
+* Allowed: DNS, LDAP/LDAPS, Kerberos, NTP, Samba
+* Masquerade: no
+
+### aw-inet (wg-inet)
+
+* Purpose: VPN client Internet egress
+* Masquerade: yes (IPv4 NAT)
+* Allows domain services for internal routing only
+
+### aw-enroll, aw-guest, aw-rootoz
+
+* Prepared and mapped to interfaces
+* Rules to be documented after full deployment
 
 ---
 
-## 7. Logs and Monitoring
+## 5. Samba / Active Directory Services
 
-### Common log locations:
-- `/var/log/samba/`  
-- `journalctl -u samba-ad-dc`  
-- `/var/log/chrony/` or `/var/log/ntpsec/`  
-- `/var/log/firewalld`  
-- `journalctl -xe`
+* **Domain:** afrowave.ltd
+* **Functions:**
 
----
-
-## 8. Outstanding Tasks (to be completed)
-
-- Verify and fix NTP configuration  
-- Add WG-LINK A record in DNS  
-- Confirm Kerberos functionality via WG-LINK  
-- Audit firewalld zones  
-- Add secondary exit routing logic  
-- Prepare DC2 replication plan  
-- Document all WireGuard peers and keys  
+  * Samba AD Domain Controller
+  * DNS Server (SAMBA_INTERNAL)
+  * LDAP/LDAPS
+  * Kerberos + kpasswd
+  * NTP (samba-managed)
+* **Health:** stable (DC1 is authoritative DNS)
 
 ---
 
-## 9. Notes
-This document will be updated continuously as we inspect DC1 and complete each subsystem (DNS, NTP, WG-LINK, firewall, Samba, replication, routing).
+## 6. DNS Overview
+
+* **Primary zone:** `afrowave.ltd`
+* **Records:**
+
+  * A/AAAA for DC1
+  * SRV records for LDAP/Kerberos/DNS
+  * WG endpoints resolved externally
+* **Resolvers:**
+
+  * `/etc/resolv.conf` points to 127.0.0.1 and ::1 (Samba DNS)
+  * systemd-resolved not used
+
+---
+
+## 7. WireGuard Overview
+
+### wg-link
+
+* Role: backbone link to other Afrowave servers
+* Port: 52030/udp
+* NAT: no
+* Status: active
+
+### wg-internal
+
+* Role: internal AD traffic
+* Port: 52020/udp
+* NAT: no
+* Status: active
+
+### wg-inet
+
+* Role: Internet egress for clients
+* Port: 52010/udp
+* NAT: yes (firewalld)
+* Status: active
+
+### Others (planned/skeleton)
+
+* wg-enroll
+* wg-guest
+* wg-rootoz
+
+---
+
+## 8. System Services
+
+* **sshd** – enabled
+* **samba-ad-dc** – enabled
+* **firewalld** – enabled
+* **WireGuard** – wg-quick used for all tunnels
+
+Cockpit previously installed → removed to prevent interference with network configs.
+
+---
+
+## 9. Routing Overview
+
+```
+default via 69.169.97.129 dev eth0
+10.20.0.0/16 dev wg-internal
+10.22.0.0/16 dev wg-inet
+10.30.0.0/24 dev wg-link
+```
+
+IPv6 routing through ISP global prefix is functional on DC1.
+Client IPv6 over WG-Inet not enabled yet.
+
+---
+
+## 10. To Be Updated / Pending
+
+* [ ] Finalize skeleton interfaces for wg-enroll, wg-guest, wg-rootoz
+* [ ] Document full DNS zone structure (including WG-link SRV/A records)
+* [ ] Update Live-Checks with all new WG tunnels
+* [ ] Add IPv6 future design section
+
+---
+
+# END
