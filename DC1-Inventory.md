@@ -1,196 +1,223 @@
-# Afrowave DC1 – Infrastructure Inventory
+# DC1-Inventory.md — Afrowave DC1 (Updated Documentation 2025)
 
-**Server Name:** afw-dc1
-**Role:** Primary Samba AD DC, DNS, KDC, VPN hub (WG-Link, WG-Internal, WG-Inet)
-**Status:** Active, production-critical
-
----
-
-## 1. Hardware Overview
-
-* **Platform:** VPS (Interserver)
-* **CPU:** Virtual (shared cores)
-* **RAM:** 3 GB
-* **Storage:** SSD-backed virtual disk
-* **NIC:** eth0 (public WAN)
+**Server Name:** `afw-dc1`  
+**Role:** Primary Samba AD Domain Controller, DNS, KDC, NTP, VPN Hub  
+**Status:** Active (production-critical)
 
 ---
 
-## 2. Operating System
+## **1. Hardware Overview**
 
-* **OS:** Debian 13.1 (Trixie)
-* **Kernel:** Debian stock kernel (systemd-managed)
-* **Init:** systemd
-* **Firewall:** firewalld (nftables backend)
-
----
-
-## 3. Network Interfaces
-
-### Physical
-
-* **eth0** – WAN / public Internet
-
-  * IPv4: `69.169.97.200/25`
-  * Gateway: `69.169.97.129`
-  * IPv6: global address assigned via ISP
-  * Zone: `public`
-
-### Virtual (WireGuard)
-
-* **wg-link**  – Server-to-server trusted mesh (DC1 ↔ home, VPS)
-
-  * IP: `10.30.0.1/24`, `fd10:af:30::1/64`
-  * Zone: `aw-link`
-
-* **wg-internal** – Internal AD/Samba/DNS/management VPN
-
-  * IP: `10.20.0.1/16`, `fd10:af:2::1/64`
-  * Zone: `aw-internal`
-
-* **wg-inet** – Internet egress VPN (primary IPv4 exit)
-
-  * IP: `10.22.0.1/16`, `fd10:af:22::1/64`
-  * Zone: `aw-inet`
-
-* **wg-enroll** – Enrollment-only network (planned)
-
-  * Zone: `aw-enroll`
-
-* **wg-guest** – Guest Internet access (isolated)
-
-  * Zone: `aw-guest`
-
-* **wg-rootoz** – High-security admin tunnel (planned)
-
-  * Zone: `aw-rootoz`
+| Parameter | Value |
+|----------|--------|
+| Platform | InterServer VPS |
+| CPU | Virtual (shared cores) |
+| RAM | 3 GB |
+| Storage | SSD-backed virtual disk |
+| NIC | `eth0` (public) |
 
 ---
 
-## 4. Firewall Zones (firewalld)
+## **2. Operating System**
 
-### Public (eth0)
-
-* **Allowed services:** ssh, dhcpv6-client
-* **Masquerade:** yes
-* **Purpose:** WAN access, secure remote admin only
-
-### aw-link (wg-link)
-
-* Purpose: trusted server-to-server mesh
-* Allowed: DNS, Kerberos, LDAP, LDAPS, NTP, Samba, high ports
-
-### aw-internal (wg-internal)
-
-* Purpose: internal AD/DNS/Kerberos network
-* Allowed: DNS, LDAP/LDAPS, Kerberos, NTP, Samba
-* Masquerade: no
-
-### aw-inet (wg-inet)
-
-* Purpose: VPN client Internet egress
-* Masquerade: yes (IPv4 NAT)
-* Allows domain services for internal routing only
-
-### aw-enroll, aw-guest, aw-rootoz
-
-* Prepared and mapped to interfaces
-* Rules to be documented after full deployment
+- **OS:** Debian 13.1 ("Trixie")  
+- **Kernel:** Debian stock kernel  
+- **Init system:** systemd  
+- **Firewall:** firewalld (nftables backend)
 
 ---
 
-## 5. Samba / Active Directory Services
+## **3. Network Interfaces**
 
-* **Domain:** afrowave.ltd
-* **Functions:**
+### **3.1 Physical Interface**
 
-  * Samba AD Domain Controller
-  * DNS Server (SAMBA_INTERNAL)
-  * LDAP/LDAPS
-  * Kerberos + kpasswd
-  * NTP (samba-managed)
-* **Health:** stable (DC1 is authoritative DNS)
+#### `eth0` – WAN / Public Internet  
+- IPv4: `69.169.97.200/25`  
+- Gateway: `69.169.97.129`  
+- IPv6: Global address via ISP  
+- Zone: `public`
 
 ---
 
-## 6. DNS Overview
+### **3.2 WireGuard Interfaces (Current + Planned)**
 
-* **Primary zone:** `afrowave.ltd`
-* **Records:**
-
-  * A/AAAA for DC1
-  * SRV records for LDAP/Kerberos/DNS
-  * WG endpoints resolved externally
-* **Resolvers:**
-
-  * `/etc/resolv.conf` points to 127.0.0.1 and ::1 (Samba DNS)
-  * systemd-resolved not used
+This is the **final WireGuard architecture officially adopted** for the Afrowave ecosystem.
 
 ---
 
-## 7. WireGuard Overview
-
-### wg-link
-
-* Role: backbone link to other Afrowave servers
-* Port: 52030/udp
-* NAT: no
-* Status: active
-
-### wg-internal
-
-* Role: internal AD traffic
-* Port: 52020/udp
-* NAT: no
-* Status: active
-
-### wg-inet
-
-* Role: Internet egress for clients
-* Port: 52010/udp
-* NAT: yes (firewalld)
-* Status: active
-
-### Others (planned/skeleton)
-
-* wg-enroll
-* wg-guest
-* wg-rootoz
+### 🔵 **wg-link** – primary server-to-server backbone  
+- IP: `10.30.0.1/24`  
+- Port: `52030/udp`  
+- Zone: `aw-link`  
+- Purpose: DC1 ↔ EDGE ↔ WebServer / Trusted Mesh  
+- NAT: No
 
 ---
 
-## 8. System Services
-
-* **sshd** – enabled
-* **samba-ad-dc** – enabled
-* **firewalld** – enabled
-* **WireGuard** – wg-quick used for all tunnels
-
-Cockpit previously installed → removed to prevent interference with network configs.
+### 🟦 **wg-link-443** – same as wg-link, but operating over port 443  
+- IP: `10.31.0.1/24`  
+- Port: `443/udp` *(stealth mode, proxy-friendly)*  
+- Zone: `aw-link`  
+- Purpose: Server mesh in restricted/corporate network environments  
+- NAT: No
 
 ---
 
-## 9. Routing Overview
+### 🟢 **wg-internal** – internal corporate VPN (no NAT)  
+- IP: `10.20.0.1/16`  
+- Zone: `aw-internal`  
+- NAT: No  
+- Purpose: AD, Kerberos, DNS, file services, management
+
+---
+
+### 🟩 **wg-inet** – internal VPN + Internet egress via Afrowave  
+- IP: `10.22.0.1/16`  
+- Zone: `aw-inet`  
+- NAT: Yes (masquerade)  
+- Purpose: For users behind censorship or restricted ISP environments
+
+---
+
+### 🟧 **wg-learn** *(planned)* – training and laboratory network  
+- IP Range: `10.24.0.0/16`  
+- Zone: `aw-learn`  
+- Purpose: Labs, sandbox, education
+
+---
+
+### 🟨 **wg-enroll** *(planned)* – domain enrollment network  
+- IP Range: `10.26.0.0/16`  
+- Zone: `aw-enroll`  
+- Purpose: Short‑term connectivity during device/domain onboarding
+
+---
+
+### 🟫 **wg-guest** *(planned)* – isolated internet‑only VPN  
+- IP Range: TBA  
+- Zone: `aw-guest`
+
+### 🔴 **wg-rootoz** *(planned)* – high‑security admin network  
+- IP Range: TBA  
+- Zone: `aw-rootoz`
+
+---
+
+## **4. Firewall Zones (firewalld)**
+
+### `public` (eth0)
+- Services: `ssh`  
+- Masquerade: yes  
+- Purpose: WAN access + secure remote administration
+
+---
+
+### `aw-link` (wg-link + wg-link-443)
+- Allowed: DNS, LDAP/LDAPS, Kerberos, Samba, NTP  
+- Trusted mesh tunnels  
+- NAT: No
+
+---
+
+### `aw-internal` (wg-internal)
+- All internal AD services  
+- NAT: No
+
+---
+
+### `aw-inet` (wg-inet)
+- Internal domain services + Internet NAT  
+- Masquerade: yes
+
+---
+
+### `aw-enroll`, `aw-learn`, `aw-guest`, `aw-rootoz`
+- Skeleton zones – will be completed after IPAM deployment
+
+---
+
+## **5. Samba / Active Directory**
+
+- **Domain:** `afrowave.ltd`  
+- **Functional Level:** Samba AD DC (latest)  
+- **Services Provided:** LDAP/LDAPS, Kerberos, DNS, NTP  
+- **Resolvers:** 127.0.0.1 / ::1  
+- **Health:** Stable and authoritative
+
+---
+
+## **6. DNS Overview**
+
+- Primary zone: **afrowave.ltd**  
+- Includes all required SRV/A/AAAA records for Samba AD  
+- With IPAM service implemented:  
+  - A/PTR records for WG clients will be created on **connect**,  
+  - Removed on **disconnect** or **lease expiration**.
+
+---
+
+## **7. WireGuard – Status and Services**
+
+### Active:
+- wg-link  
+- wg-link-443  
+- wg-internal  
+- wg-inet  
+
+### Planned / Skeleton:
+- wg-learn  
+- wg-enroll  
+- wg-guest  
+- wg-rootoz  
+
+---
+
+## **8. System Services (Status)**
+
+- `sshd` – enabled  
+- `samba-ad-dc` – enabled  
+- `firewalld` – enabled  
+- `systemd-resolved` – disabled  
+- WireGuard – managed via `wg-quick`
+
+---
+
+## **9. Routing Overview**
 
 ```
 default via 69.169.97.129 dev eth0
 10.20.0.0/16 dev wg-internal
 10.22.0.0/16 dev wg-inet
+10.24.0.0/16 dev wg-learn     # planned
+10.26.0.0/16 dev wg-enroll    # planned
 10.30.0.0/24 dev wg-link
+10.31.0.0/24 dev wg-link-443
 ```
 
-IPv6 routing through ISP global prefix is functional on DC1.
-Client IPv6 over WG-Inet not enabled yet.
+---
+
+## **10. Pending Work / Future Steps**
+
+- [ ] Document all WG skeleton interfaces  
+- [ ] Implement **Afrowave.WgAddressDispatcher** (IPAM)  
+- [ ] AD Groups `AFW_VPN_*` + access policy mapping  
+- [ ] Create additional internal DNS zone entries for wg-link-443  
+- [ ] Add monitoring & health checks for all WG tunnels  
+- [ ] Add third public-facing server (Web/API) to the WG Mesh  
 
 ---
 
-## 10. To Be Updated / Pending
+## **Changes Compared to Previous Version**
 
-* [ ] Finalize skeleton interfaces for wg-enroll, wg-guest, wg-rootoz
-* [ ] Document full DNS zone structure (including WG-link SRV/A records)
-* [ ] Update Live-Checks with all new WG tunnels
-* [ ] Add IPv6 future design section
+- Added new WG tunnel **wg-link-443** (port 443/udp, new range 10.31.0.0/24)  
+- Confirmed final ranges of all WG networks (20/16, 22/16, 24/16, 26/16, 30/24, 31/24)  
+- Updated roles and purposes of individual WG networks based on new architecture  
+- Updated firewall zone descriptions and mappings  
+- Added structure for the upcoming IPAM service (Afrowave.WgAddressDispatcher)  
+- Updated DNS section to support dynamic WG client registration  
+- Removed outdated WG-mail references  
 
 ---
 
-# END
+# **END OF FILE**
+
