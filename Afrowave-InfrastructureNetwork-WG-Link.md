@@ -1,227 +1,188 @@
-Afrowave-Infrastructure/Network-WG-Link
-========================
+# Afrowave Infrastructure – WG-LINK Architecture (2025)
 
-# WG-LINK – Afrowave Server Backbone Network
-WG-LINK is the core backbone network interconnecting all Afrowave servers.  
-It is a trusted, unrestricted, high-throughput channel designed for stability, security, and zero-friction server communication.
+WG-LINK is the primary backbone interconnecting all Afrowave servers across regions. It provides stable, trusted, unrestricted communication for core services such as Active Directory, DNS, Kerberos, CA operations, and internal application traffic.
 
-This network is the foundation of:
-- Active Directory replication
-- Kerberos authentication
-- Samba internal DNS
-- Cross-server service communication
-- Monitoring and management
-- Backup routing and failover paths
+This document reflects the **updated architecture**, including the unified logical design of **wg-link** and **wg-link-443**.
 
 ---
 
-# 1. Design Philosophy
+# 1. Purpose
 
-WG-LINK follows the **“Internet Principle”**:
+WG-LINK forms the backbone for:
+- Active Directory replication (LDAP, Kerberos, GC)
+- DNS inter-server communication
+- Internal service-to-service links
+- Monitoring and management traffic
+- Secure routing between datacenters and home servers
+- Failover connectivity and fallback tunnels
 
-> Every server in the backbone is a fully trusted router and neighbor.  
-> No firewalls, no NAT, no filtering — only maximum reliability, speed, and transparency.
-
-This ensures:
-- Minimal operational complexity  
-- Maximum consistency across data centers  
-- Ability to handle any protocol without adjustments  
-- Predictable troubleshooting  
-- Full redundancy between locations  
-
-WG-LINK is the most trusted and highest-priority network segment.
+WG-LINK is designed for maximum trust and minimal filtering.
 
 ---
 
-# 2. Purpose of WG-LINK
+# 2. Logical Topology
 
-WG-LINK is used for:
+WG-LINK operates as a **logical single network**, even though it may be transported over different ports.
 
-### ✔ 2.1 Active Directory (critical)
-- LDAP / LDAPS
-- Kerberos (UDP/TCP 88)
-- Global Catalog (3268/3269)
-- DRS replication
-- NTP signed time (ntp_signd)
-- DNS queries between DCs and servers
+```
+              +----------------------------+
+              |        DC1 (10.30.0.1)     |
+              |   Primary hub & AD Root    |
+              +---------------+------------+
+                              |
+                        wg-link / wg-link-443
+                              |
+          -------------------------------------------------
+          |                         |                     |
+ +----------------+     +-------------------+   +---------------------+
+ | afw-microserver|     |  EDGE Server      |   |  Future Servers     |
+ | 10.30.0.10     |     | 10.30.0.20        |   | 10.30.0.x           |
+ +----------------+     +-------------------+   +---------------------+
+```
 
-### ✔ 2.2 Backend Service Communication
-- Internal HTTP/HTTPS services
-- File sharing
-- Certificates and CA operations
-- Monitoring systems
-
-### ✔ 2.3 Inter-server VPN Connectivity
-- Server-to-server reachability
-- Internal routing and failover
-- Cross-location connectivity (USA ↔ EU ↔ home server)
-
-### ✔ 2.4 Backup WAN Routing
-WG-LINK may optionally provide:
-- Backup internet connectivity for DC1/DC2
-- Failover routing between regions
-- Controlled fallback for critical updates
+**Any-to-any connectivity** is achieved via the hub (DC1), with DNS resolving all server names.
 
 ---
 
-# 3. IP Address Scheme
+# 3. IP Addressing
 
-WG-LINK uses a **dedicated IPv4 /24**, large enough for:
-- All present and future servers
-- Temporary testing peers
-- Backup servers
-- Internal services
-
-Recommended default:
+WG-LINK uses a dedicated /24:
 ```
-WG-LINK IPv4 Network: 10.30.0.0/24
+10.30.0.0/24
 ```
 
-### 3.1 Suggested server assignments
-| Server | Role | WG-LINK IP | Status |
-|--------|------|-------------|--------|
-| DC1 | Primary AD DC | 10.30.0.1 | Active |
-| DC2 | Secondary AD DC (future) | 10.30.0.2 | Planned |
-| Diblík | Home server | 10.30.0.10 | Active |
-| Edge | Web/Translate server | 10.30.0.20 | Active |
-| Additional servers | Reserved | 10.30.0.x | Planned |
+Recommended assignments:
+- **DC1** → 10.30.0.1
+- **afw-microserver** → 10.30.0.10
+- **EDGE server** → 10.30.0.20
+- **future nodes** → 10.30.0.x
 
-WG-LINK uses **static IPs** for all servers.
+All IPs are static.
 
 ---
 
-# 4. WireGuard Configuration Standard
+# 4. Single Logical Network via Dual Transport
 
-### 4.1 Interface naming
-All servers must use:
-```
-wg-link
-```
+WG-LINK may be accessed via two different ports:
 
-### 4.2 MTU
-Consistent MTU across servers:
+### 4.1 Primary transport
 ```
-MTU = 1420
-```
-(or adjusted per transport provider)
-
-### 4.3 AllowedIPs
-WG-LINK is always **/32 per peer**, routing is handled dynamically:
-
-Example:
-```
-AllowedIPs = 10.30.0.1/32
+wg-link → UDP 52030
 ```
 
-Do **not** route entire subnets through peers — each server is its own endpoint.
+### 4.2 Fallback transport
+```
+wg-link-443 → UDP 443
+```
+
+## Both interfaces carry **the same logical identity**:
+- same WG private/public keys (optional but recommended)
+- same internal IP addressing (10.30.0.x)
+- same routing rules
+- same DNS expectations
+
+The difference is **only the transport port**.
+
+This enables connectivity through restrictive firewalls without requiring two separate logical tunnels.
 
 ---
 
-# 5. Firewall Rules (Firewalld)
+# 5. Interfaces and Configuration
 
-WG-LINK is placed in a dedicated zone:
+Both interfaces belong to the **aw-link** firewalld zone:
 
-`Zone name: aw-link`
-
-Zone requirements:
-- `target=ACCEPT`
-- no filtering
-- no NAT
-- no service restrictions
-
-Example:
 ```
-firewall-cmd --permanent --new-zone=aw-link
-firewall-cmd --permanent --zone=aw-link --set-target=ACCEPT
 firewall-cmd --permanent --zone=aw-link --add-interface=wg-link
+firewall-cmd --permanent --zone=aw-link --add-interface=wg-link-443
 firewall-cmd --reload
 ```
+
+Zone properties:
+- `target=ACCEPT`
+- no NAT
+- no filtering
 
 ---
 
 # 6. DNS Requirements
 
-WG-LINK must have valid DNS A records for all servers:
+All WG-LINK nodes must have DNS A records:
 
 ```
-dc1-link.afrowave.ltd → 10.30.0.1
-dc2-link.afrowave.ltd → 10.30.0.2
-dibles-link.afrowave.ltd → 10.30.0.10
-edge-link.afrowave.ltd → 10.30.0.20
+dc1-link.afrowave.ltd        → 10.30.0.1
+afw-microserver.link.afrowave.ltd → 10.30.0.10
+edge-link.afrowave.ltd       → 10.30.0.20
 ```
 
-(Names may be adjusted but must be consistent.)
-
-These records allow:
-- Kerberos SPN consistency
-- AD replication
-- Internal service discovery
-- Diagnostics
+These are used for:
+- Kerberos SPNs
+- AD DRS replication
+- DNS lookups
+- Monitoring
+- Internal services
 
 ---
 
-# 7. Monitoring and Health Checks
+# 7. Routing
 
-WG-LINK health must be continuously monitored:
+WG-LINK routing rules:
+- each peer announces only its own `/32`
+- routing between nodes is performed by DC1 (hub)
+- allows stable any-to-any connectivity
 
-### 7.1 Ping checks:
+Example:
 ```
-ping 10.30.0.1
-ping 10.30.0.10
-ping 10.30.0.20
+AllowedIPs = 10.30.0.10/32
+AllowedIPs = 10.30.0.20/32
 ```
 
-### 7.2 WireGuard handshake checks:
+This design is stable, scalable, and predictable.
+
+---
+
+# 8. Monitoring WG-LINK
+
+Commands:
 ```
 wg show wg-link
-```
-
-### 7.3 AD replication tests:
-```
+wg show wg-link-443
+ping 10.30.0.1
+ping 10.30.0.10
 samba-tool drs showrepl
 ```
 
-### 7.4 DNS service tests:
-```
-host dc1-link.afrowave.ltd
-```
-
-Any packet loss or handshake failure is critical.
+Monitoring health of both transports ensures continuity.
 
 ---
 
-# 8. Backup Routing (Optional)
+# 9. Relation to WG-LINK-443
 
-WG-LINK may provide backup Internet routing between regions.
+WG-LINK-443 is not a separate network.  
+It is simply a *transport alternative* for WG-LINK.
 
-Rules:
-- Only servers (not clients) may receive failover routes.
-- NAT must **not** be applied on WG-LINK.
-- Failover must be explicit, never automatic.
+Use cases:
+- users behind strict corporate firewalls
+- environments with limited UDP port availability
+- fallback routing during provider outages
 
-This ensures stability while providing redundancy.
-
----
-
-# 9. Future Extensions
-
-WG-LINK will be used for:
-- DC2 replication (EU region)
-- Secure CA interactions
-- Streaming logs / metrics
-- Cross-continent service clusters
+Configuration guidelines:
+- WG-LINK and WG-LINK-443 share the **same logical address space**
+- DNS records do not differ
+- both tunnels merge into the aw-link zone
+- DC1 remains the hub for both
 
 ---
 
-# 10. Cross-References
-- [DC1 Inventory](DC1-Inventory.md)
-- [DC1 Live Checks](DC1-Live-Checks.md)
-- [Troubleshooting](Troubleshooting/)
-- [GitHub Sync Guide](GitHub-Sync-Guide.md)
+# Change Log (2025-12-07)
+- Unified WG-LINK and WG-LINK-443 into a single logical network.
+- Clarified dual-transport architecture using UDP 52030 (primary) and UDP 443 (fallback).
+- Added DNS integration model linking all servers via `*.link.afrowave.ltd`.
+- Formalized any-to-any interserver communication routed via DC1.
+- Added full interface, routing, and zone configuration guidance.
 
 ---
 
 # Tags
 ```
-#network #wireguard #wg-link #infrastructure #backbone #vpn #ad #servers
+#wireguard #wg-link #architecture #vpn #afrowave #backbone #ad #infrastructure
 ```
